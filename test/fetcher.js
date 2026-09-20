@@ -441,7 +441,6 @@ t.test('extract into folder that already has a package in it', async t => {
   // will remove weird and weird/foo bundle dep, but not weird/bar
   await new FileFetcher(weirdspec, { cache }).extract(dir)
   const missing = [
-    'index-hardlink.js',
     'index-symlink.js',
     '.gitignore',
     'lib/.gitignore',
@@ -453,6 +452,7 @@ t.test('extract into folder that already has a package in it', async t => {
     t.throws(() => fs.statSync(dir + '/' + f), 'excluded or removed' + f))
 
   const present = [
+    'index-hardlink.js',
     'no-gitignore-here/.npmignore',
     'node_modules/bar/package.json',
     'node_modules/bar/index.js',
@@ -460,6 +460,11 @@ t.test('extract into folder that already has a package in it', async t => {
   ]
   present.forEach(f =>
     t.ok(fs.statSync(dir + '/' + f), 'still have file at ' + f))
+  t.equal(
+    fs.statSync(dir + '/index-hardlink.js').ino,
+    fs.statSync(dir + '/index.js').ino,
+    'hardlinked file is extracted as a hardlink to the original file'
+  )
 })
 
 t.test('a non-retriable cache error', t => {

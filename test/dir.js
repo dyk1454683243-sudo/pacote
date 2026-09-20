@@ -201,3 +201,37 @@ t.test('with prepare script and ignoreScripts true', async t => {
   await f.extract(me + '/prepare-ignore')
   t.ok(!shouldNotBePopulated)
 })
+
+t.test('extracts hardlinked files that share inodes', async t => {
+  const dir = t.testdir({
+    'package.json': JSON.stringify({
+      name: 'hardlink-pkg',
+      version: '1.0.0',
+    }),
+    'index.js': 'module.exports = 42\n',
+    dist: {},
+  })
+  try {
+    fs.linkSync(resolve(dir, 'index.js'), resolve(dir, 'dist/index.js'))
+  } catch {
+    t.skip('hardlinks are not supported on this filesystem')
+    return
+  }
+  t.equal(
+    fs.statSync(resolve(dir, 'index.js')).ino,
+    fs.statSync(resolve(dir, 'dist/index.js')).ino,
+    'fixture files share an inode'
+  )
+
+  const f = new DirFetcher(`file:${dir}`, { tree: await loadActual(dir) })
+  const out = resolve(me, 'hardlink-pkg')
+  await f.extract(out)
+
+  const expected = 'module.exports = 42\n'
+  t.equal(fs.readFileSync(resolve(out, 'index.js'), 'utf8'), expected)
+  t.equal(
+    fs.readFileSync(resolve(out, 'dist/index.js'), 'utf8'),
+    expected,
+    'hardlinked copy is extracted, not dropped by the Link filter'
+  )
+})
