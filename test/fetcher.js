@@ -441,7 +441,6 @@ t.test('extract into folder that already has a package in it', async t => {
   // will remove weird and weird/foo bundle dep, but not weird/bar
   await new FileFetcher(weirdspec, { cache }).extract(dir)
   const missing = [
-    'index-hardlink.js',
     'index-symlink.js',
     '.gitignore',
     'lib/.gitignore',
@@ -453,6 +452,7 @@ t.test('extract into folder that already has a package in it', async t => {
     t.throws(() => fs.statSync(dir + '/' + f), 'excluded or removed' + f))
 
   const present = [
+    'index-hardlink.js',
     'no-gitignore-here/.npmignore',
     'node_modules/bar/package.json',
     'node_modules/bar/index.js',
@@ -460,6 +460,61 @@ t.test('extract into folder that already has a package in it', async t => {
   ]
   present.forEach(f =>
     t.ok(fs.statSync(dir + '/' + f), 'still have file at ' + f))
+  t.equal(
+    fs.statSync(dir + '/index-hardlink.js').ino,
+    fs.statSync(dir + '/index.js').ino,
+    'hardlinked file is extracted as a hardlink to the original file'
+  )
+})
+
+t.test('extracts hardlinked files that share inodes and still skips symlinks', async t => {
+  const tar = require('tar')
+  const src = t.testdir({
+    'package.json': JSON.stringify({ name: 'hardlink-pkg', version: '1.0.0' }),
+    'index.js': 'module.exports = 42\n',
+    dist: {},
+  })
+  try {
+    fs.linkSync(resolve(src, 'index.js'), resolve(src, 'dist/index.js'))
+  } catch {
+    t.skip('hardlinks are not supported on this filesystem')
+    return
+  }
+  fs.symlinkSync('index.js', resolve(src, 'symlink.js'))
+  t.equal(
+    fs.statSync(resolve(src, 'index.js')).ino,
+    fs.statSync(resolve(src, 'dist/index.js')).ino,
+    'fixture files share an inode'
+  )
+
+  const tgz = resolve(me, 'hardlink-pkg.tgz')
+  await tar.c({
+    file: tgz,
+    cwd: src,
+    gzip: true,
+    prefix: 'package/',
+    portable: true,
+  }, ['package.json', 'index.js', 'dist/index.js', 'symlink.js'])
+
+  const packed = []
+  await tar.t({
+    file: tgz,
+    onReadEntry: entry => packed.push({ path: entry.path, type: entry.type }),
+  })
+  t.match(packed, [
+    { path: 'package/package.json', type: 'File' },
+    { path: 'package/index.js', type: 'File' },
+    { path: 'package/dist/index.js', type: 'Link' },
+    { path: 'package/symlink.js', type: 'SymbolicLink' },
+  ], 'node-tar encodes the shared-inode file as type Link')
+
+  const dest = resolve(me, 'hardlink-extract')
+  await new FileFetcher(`file:${tgz}`, { cache }).extract(dest)
+
+  const expected = 'module.exports = 42\n'
+  t.equal(fs.readFileSync(resolve(dest, 'index.js'), 'utf8'), expected)
+  t.equal(fs.readFileSync(resolve(dest, 'dist/index.js'), 'utf8'), expected)
+  t.throws(() => fs.lstatSync(resolve(dest, 'symlink.js')), 'symbolic link is still skipped')
 })
 
 t.test('a non-retriable cache error', t => {
